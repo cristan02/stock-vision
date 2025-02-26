@@ -1,0 +1,8 @@
+python -m pipenv install django
+
+django-admin startproject .
+
+python manage.py runserver
+
+
+pipenv shell
