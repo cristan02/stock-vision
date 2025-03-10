@@ -119,6 +119,7 @@ export default function Page() {
   ];
 
   const [portfolios, setPortfolios] = useState(resEx);
+  const [flag, setFlag] = useState(false);
 
   const COLORS = [
     "#0088FE",
@@ -177,6 +178,7 @@ export default function Page() {
         })
         .then((response) => {
           setPortfolios(response.data);
+          setFlag(true);
           return;
         })
         .catch((error) => {
@@ -199,7 +201,7 @@ export default function Page() {
           <CardTitle>Inputs</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid w-full max-w-sm items-center gap-1.5">
+          <div className="grid w-full  items-center gap-1.5">
             <Label htmlFor="email">Stock Symbol</Label>
             <Input
               placeholder="AAPL MSFT TSLA"
@@ -208,7 +210,7 @@ export default function Page() {
             />
             <div>*Note: Enter each stock symbol with space in between</div>
           </div>
-          <div className="grid w-full max-w-sm items-center gap-1.5">
+          <div className="grid w-full  items-center gap-1.5">
             <Label>Investment Budget (USD)</Label>
             <Input
               placeholder="5000"
@@ -217,9 +219,20 @@ export default function Page() {
               onChange={(e) => setBudget(e.target.value)}
             />
           </div>
-          <Button onClick={handlePredict} className="w-full">
-            Get Suggestion
-          </Button>
+          {flag ? (
+            <Button
+              onClick={() => {
+                window.location.reload();
+              }}
+              className="w-full bg-red-200 hover:bg-red-300"
+            >
+              Reset
+            </Button>
+          ) : (
+            <Button onClick={handlePredict} className="w-full">
+              Get Suggestion
+            </Button>
+          )}
         </CardContent>
       </Card>
 

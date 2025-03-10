@@ -8,19 +8,20 @@ from rest_framework.response import Response
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
-from datetime import datetime, timedelta
+from tensorflow.keras.callbacks import EarlyStopping
+from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.svm import SVR
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.svm import SVR
-
+from sklearn.preprocessing import StandardScaler
+from xgboost import XGBRegressor
 
 # Fetch stock data dynamically
 def get_stock_data(ticker):
-    stock = yf.download(ticker, period="max")
+    stock = yf.download(ticker, period="10y")
     return stock
 
 # Prepare dataset for LSTM
@@ -35,21 +36,26 @@ def prepare_lstm_data(df, time_step=60):
         y.append(df_scaled[i+time_step])
 
     X, y = np.array(X), np.array(y)
-    X_train, X_test = X[:-100], X[-100:]  # Use last 100 days as test
-    y_train, y_test = y[:-100], y[-100:]
+
+    split_ratio = 0.8  # 80% training, 20% testing
+    split_index = int(len(X) * split_ratio)  # Compute split index
+
+    X_train, X_test = X[:split_index], X[split_index:]
+    y_train, y_test = y[:split_index], y[split_index:]
+    # X_train, X_test = X[:-100], X[-100:]  # Use last 100 days as test
+    # y_train, y_test = y[:-100], y[-100:]
 
     return X_train, X_test, y_train, y_test, scaler, df_scaled[-time_step:]
 
 # Define LSTM model
 def build_lstm_model(input_shape):
     model = Sequential([
-        LSTM(256, return_sequences=True, input_shape=input_shape),
+        LSTM(50, return_sequences=True, input_shape=input_shape),
         Dropout(0.2),
-        LSTM(128, return_sequences=True),
+        LSTM(50, return_sequences=False),
         Dropout(0.2),
-        LSTM(64, return_sequences=False),
         Dense(25),
-        Dense(1)
+        Dense(1),
     ])
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
@@ -68,7 +74,6 @@ def predict_future_prices(model, last_60_days, scaler, future_days=30):
 
     return scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1)).flatten().tolist()
 
-# Django API endpoint
 @api_view(['POST'])
 def lstm_stock_prediction(request):
     try:
@@ -80,7 +85,8 @@ def lstm_stock_prediction(request):
         X_train, X_test, y_train, y_test, scaler, last_60_days = prepare_lstm_data(df)
 
         model = build_lstm_model((X_train.shape[1], 1))
-        model.fit(X_train, y_train, batch_size=32, epochs=2, verbose=1)
+        early_stopping = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+        model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=1, callbacks=[early_stopping])
 
         # Predict on test data (last 100 rows)
         y_pred_scaled = model.predict(X_test)
@@ -120,119 +126,11 @@ def lstm_stock_prediction(request):
         return Response({"error": str(e)}, status=500)
 
 @api_view(['POST'])
-def random_forest_stock_prediction(request):
-    try:
-        data = request.data
-        ticker = data.get("ticker", "AAPL")
-        future_days = int(data.get("days", 30))
-
-        df = get_stock_data(ticker)
-        df['Close'] = df['Close'].fillna(method='ffill')  # Handle missing values
-
-        # Prepare dataset
-        df['Date'] = df.index
-        df['Date'] = df['Date'].map(datetime.toordinal)  # Convert dates to ordinal numbers
-
-        X = df[['Date']]
-        y = df['Close']
-
-        # Train-test split
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-        # Train Random Forest Model
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
-
-        # Predict on test data
-        y_pred = model.predict(X_test)
-
-        # Compute metrics
-        mae = mean_absolute_error(y_test, y_pred)
-        mse = mean_squared_error(y_test, y_pred)
-        mape = mean_absolute_percentage_error(y_test, y_pred)
-
-        # Prepare actual vs predicted data
-        actual_vs_predicted = [
-            {"date": df.index[len(X_train) + i].strftime("%Y-%m-%d"), "Actual": round(float(y_test.iloc[i]), 2),
-             "Predicted": round(float(y_pred[i]), 2)}
-            for i in range(len(y_test))
-        ]
-
-        # Predict future prices
-        last_date = df.index[-1]
-        future_dates = [(last_date + timedelta(days=i)).toordinal() for i in range(1, future_days + 1)]
-        future_predictions = model.predict(pd.DataFrame(future_dates, columns=['Date'])).tolist()
-
-        return Response({
-            "ticker": ticker,
-            "future_predictions": future_predictions,
-            "metrics": {"MAE": round(mae, 4), "MSE": round(mse, 4), "MAPE": round(mape, 4)},
-            "actual_vs_predicted": actual_vs_predicted
-        })
-
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-
-@api_view(['POST'])
-def svm_stock_prediction(request):
-    try:
-        data = request.data
-        ticker = data.get("ticker", "AAPL")
-        future_days = int(data.get("days", 30))
-
-        df = get_stock_data(ticker)
-        df['Close'] = df['Close'].fillna(method='ffill')  # Handle missing values
-
-        # Prepare dataset
-        df['Date'] = df.index
-        df['Date'] = df['Date'].map(datetime.toordinal)  # Convert dates to ordinal numbers
-
-        X = df[['Date']]
-        y = df['Close']
-
-        # Train-test split
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-        # Train SVM Model
-        model = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.1)
-        model.fit(X_train, y_train)
-
-        # Predict on test data
-        y_pred = model.predict(X_test)
-
-        # Compute metrics
-        mae = mean_absolute_error(y_test, y_pred)
-        mse = mean_squared_error(y_test, y_pred)
-        mape = mean_absolute_percentage_error(y_test, y_pred)
-
-        # Prepare actual vs predicted data
-        actual_vs_predicted = [
-            {"date": df.index[len(X_train) + i].strftime("%Y-%m-%d"), "Actual": round(float(y_test.iloc[i]), 2),
-             "Predicted": round(float(y_pred[i]), 2)}
-            for i in range(len(y_test))
-        ]
-
-        # Predict future prices
-        last_date = df.index[-1]
-        future_dates = [(last_date + timedelta(days=i)).toordinal() for i in range(1, future_days + 1)]
-        future_predictions = model.predict(pd.DataFrame(future_dates, columns=['Date'])).tolist()
-
-        return Response({
-            "ticker": ticker,
-            "future_predictions": future_predictions,
-            "metrics": {"MAE": round(mae, 4), "MSE": round(mse, 4), "MAPE": round(mape, 4)},
-            "actual_vs_predicted": actual_vs_predicted
-        })
-
-    except Exception as e:
-        return Response({"error": str(e)}, status=500)
-
-
-@api_view(['POST'])
 def validate_tickers(request):
     """
-    Validate stock tickers from a space-separated string.
+    Validate stock tickers from a space-separated string and return last day's closing price and date for valid tickers.
     """
+
     tickers_string = request.data.get("stocks", "")
 
     # Ensure input is a non-empty string
@@ -246,26 +144,41 @@ def validate_tickers(request):
         return Response({"error": "No valid tickers found in input."}, status=400)
 
     invalid_tickers = []
-    
+    valid_tickers = {}
+
     for ticker in tickers:
         stock = yf.Ticker(ticker)
         try:
-            info = stock.history(period="1d")  # Check if stock data exists
-            if info.empty:
+            # Fetch historical data for the last available day
+            history = stock.history(period="1d")
+            if history.empty:
                 invalid_tickers.append(ticker)
-        except:
+            else:
+                # Get the last day's closing price and date
+                last_close_price = history['Close'].iloc[-1]
+                last_date = history.index[-1].strftime("%Y-%m-%d")  # Format date as string
+                valid_tickers[ticker] = {
+                    "last_close_price": round(last_close_price, 2),  # Round to 2 decimal places
+                    "last_date": last_date  # Add the last retrieved date
+                }
+        except Exception as e:
             invalid_tickers.append(ticker)
 
-    if invalid_tickers:
-        return Response({"is_valid": False, "invalid_tickers": invalid_tickers})
+    response_data = {
+        "is_valid": not bool(invalid_tickers),  # True if no invalid tickers
+        "valid_tickers": valid_tickers,
+    }
 
-    return Response({"is_valid": True})
+    if invalid_tickers:
+        response_data["invalid_tickers"] = invalid_tickers
+
+    return Response(response_data)
 
 @api_view(['POST'])
 def optimize_portfolio_api(request):
     try:
         # Extract user inputs
-        data = request.data  # If only 2 stocks, max_weight = 0.5
+        data = request.data  
         universe_tickers = data.get("tickers", ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOG', 'ZOMATO.NS'])
         investment_budget_usd = data.get("budget", 5000)
 
@@ -275,7 +188,7 @@ def optimize_portfolio_api(request):
 
         # Categorize stocks
         indian_stocks = [ticker for ticker in universe_tickers if ticker.endswith('.NS')]
-        us_stocks = [ticker for ticker in universe_tickers if ticker not in indian_stocks]
+        # us_stocks = [ticker for ticker in universe_tickers if ticker not in indian_stocks]
 
         # Download historical data
         stock_data = yf.download(universe_tickers, period="5y")['Close']
@@ -371,6 +284,205 @@ def optimize_portfolio_api(request):
         portfolios = [create_portfolio_response(strategy.replace('_', ' ').title() + " Portfolio", optimize_portfolio(strategy)) for strategy in strategies]
 
         return Response([p for p in portfolios if p is not None])
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+# Custom function to calculate Mean Absolute Percentage Error (MAPE)
+def mean_absolute_percentage_error(y_true, y_pred):
+    y_true = np.array(y_true).reshape(-1)  # Flatten to match y_pred
+    y_pred = np.array(y_pred).reshape(-1)
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+# Helper function to prepare data
+def prepare_data(df, lookback=10):
+    data = df.copy()
+    for i in range(1, lookback + 1):
+        data[f'Close_Lag_{i}'] = data['Close'].shift(i)
+    data.dropna(inplace=True)
+    return data
+
+# Helper function to predict future prices
+def predict_future_prices_ml(model, scaler, last_known_data, prediction_days):
+    future_predictions = []
+    current_data = last_known_data.copy()
+    
+    for _ in range(prediction_days):
+        if scaler:
+            current_data_scaled = scaler.transform(current_data)
+            next_day_pred = model.predict(current_data_scaled)
+        else:
+            next_day_pred = model.predict(current_data)
+        
+        future_predictions.append(next_day_pred[0])
+        current_data = np.roll(current_data, -1)
+        current_data[-1] = next_day_pred
+    
+    return future_predictions
+
+# Random Forest API
+@api_view(['POST'])
+def random_forest_stock_prediction(request):
+    try:
+        data = request.data
+        ticker = data.get("ticker", "AAPL")
+        future_days = int(data.get("days", 30))
+
+        # Fetch stock data
+        df = yf.download(ticker, start='2024-06-01', end=datetime.today().strftime('%Y-%m-%d'))
+        df = df[['Close']]
+        df['Close'] = df['Close'].fillna(method='ffill')  # Handle missing values
+
+        # Prepare dataset
+        data = prepare_data(df)
+        X = data.drop(columns=['Close'])
+        y = data['Close']
+
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        # Train Random Forest Model
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+
+        # Predict on test data
+        y_pred = model.predict(X_test)
+
+        # Compute metrics
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        mape = mean_absolute_percentage_error(y_test, y_pred)
+
+        # Prepare actual vs predicted data
+        actual_vs_predicted = [
+            {"date": data.index[len(X_train) + i].strftime("%Y-%m-%d"), "Actual": round(float(y_test.iloc[i]), 2),
+             "Predicted": round(float(y_pred[i]), 2)}
+            for i in range(len(y_test))
+        ]
+
+        # Predict future prices
+        last_known_data = X_test.iloc[-1:].values
+        future_predictions = predict_future_prices_ml(model, None, last_known_data, future_days)
+
+        return Response({
+            "ticker": ticker,
+            "future_predictions": future_predictions,
+            "metrics": {"MAE": round(mae, 4), "MSE": round(mse, 4), "MAPE": round(mape, 4)},
+            "actual_vs_predicted": actual_vs_predicted
+        })
+
+    except Exception as e:
+         return Response({"error": str(e)}, status=500)
+
+# Ridge Regression API
+@api_view(['POST'])
+def ridge_stock_prediction(request):
+    try:
+        data = request.data
+        ticker = data.get("ticker", "AAPL")
+        future_days = int(data.get("days", 30))
+
+        # Fetch stock data
+        df = yf.download(ticker, start=None, end=datetime.today().strftime('%Y-%m-%d'))
+        df = df[['Close']]
+        df['Close'] = df['Close'].fillna(method='ffill')  # Handle missing values
+
+        # Prepare dataset
+        data = prepare_data(df)
+        X = data.drop(columns=['Close'])
+        y = data['Close']
+
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        # Scale data
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        # Train Ridge Regression Model
+        model = Ridge(alpha=1.0)
+        model.fit(X_train_scaled, y_train)
+
+        # Predict on test data
+        y_pred = model.predict(X_test_scaled)
+
+        # Compute metrics
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        mape = mean_absolute_percentage_error(y_test, y_pred)
+
+        # Prepare actual vs predicted data
+        actual_vs_predicted = [
+            {"date": data.index[len(X_train) + i].strftime("%Y-%m-%d"), "Actual": round(float(y_test.iloc[i]), 2),
+             "Predicted": round(float(y_pred[i]), 2)}
+            for i in range(len(y_test))
+        ]
+
+        # Predict future prices
+        last_known_data = X_test.iloc[-1:].values
+        future_predictions = predict_future_prices_ml(model, scaler, last_known_data, future_days)
+
+        return Response({
+            "ticker": ticker,
+            "future_predictions": future_predictions,
+            "metrics": {"MAE": round(mae, 4), "MSE": round(mse, 4), "MAPE": round(mape, 4)},
+            "actual_vs_predicted": actual_vs_predicted
+        })
+
+    except Exception as e:
+         return Response({"error": str(e)}, status=500)
+
+# XGBoost API
+@api_view(['POST'])
+def xgboost_stock_prediction(request):
+    try:
+        data = request.data
+        ticker = data.get("ticker", "AAPL")
+        future_days = int(data.get("days", 30))
+
+        # Fetch stock data
+        df = yf.download(ticker, start='2024-06-01', end=datetime.today().strftime('%Y-%m-%d'))
+        df = df[['Close']]
+        df['Close'] = df['Close'].fillna(method='ffill')  # Handle missing values
+
+        # Prepare dataset
+        data = prepare_data(df)
+        X = data.drop(columns=['Close'])
+        y = data['Close']
+
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        # Train XGBoost Model
+        model = XGBRegressor(objective='reg:squarederror', n_estimators=200, max_depth=5, learning_rate=0.1, random_state=42)
+        model.fit(X_train, y_train)
+
+        # Predict on test data
+        y_pred = model.predict(X_test)
+
+        # Compute metrics
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        mape = mean_absolute_percentage_error(y_test, y_pred)
+
+        # Prepare actual vs predicted data
+        actual_vs_predicted = [
+            {"date": data.index[len(X_train) + i].strftime("%Y-%m-%d"), "Actual": round(float(y_test.iloc[i]), 2),
+             "Predicted": round(float(y_pred[i]), 2)}
+            for i in range(len(y_test))
+        ]
+
+        # Predict future prices
+        last_known_data = X_test.iloc[-1:].values
+        future_predictions = predict_future_prices_ml(model, None, last_known_data, future_days)
+
+        return Response({
+            "ticker": ticker,
+            "future_predictions": future_predictions,
+            "metrics": {"MAE": round(mae, 4), "MSE": round(mse, 4), "MAPE": round(mape, 4)},
+            "actual_vs_predicted": actual_vs_predicted
+        })
 
     except Exception as e:
         return Response({"error": str(e)}, status=500)

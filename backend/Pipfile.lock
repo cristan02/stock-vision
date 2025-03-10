@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "cb71ed73027ed727dccf0bbf049451496b0ff4fa6a085210acd4f3ca8d2aa42c"
+            "sha256": "07039736353f43a0466e06dbf434b2d41a4b95f096ae3fc1515f169d91ceebbe"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -1241,6 +1241,21 @@
             ],
             "markers": "python_version >= '3.8'",
             "version": "==1.17.2"
+        },
+        "xgboost": {
+            "hashes": [
+                "sha256:523db01d4e74b05c61a985028bde88a4dd380eadc97209310621996d7d5d14a7",
+                "sha256:57c7e98111aceef4b689d7d2ce738564a1f7fe44237136837a47847b8b33bade",
+                "sha256:78d88da184562deff25c820d943420342014dd55e0f4c017cc4563c2148df5ee",
+                "sha256:8bbfe4fedc151b83a52edbf0de945fd94358b09a81998f2945ad330fd5f20cd6",
+                "sha256:8df6da72963969ab2bf49a520c3e147b1e15cbeddd3aa0e3e039b3532c739339",
+                "sha256:ab84c4bbedd7fae1a26f61e9dd7897421d5b08454b51c6eb072abc1d346d08d7",
+                "sha256:d366097d0db047315736f46af852feaa907f6d7371716af741cdce488ae36d20",
+                "sha256:f1343a512e634822eab30d300bfc00bf777dc869d881cc74854b42173cfcdb14"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.8'",
+            "version": "==2.1.4"
         },
         "yfinance": {
             "hashes": [

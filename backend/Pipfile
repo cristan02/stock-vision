@@ -7,9 +7,10 @@ name = "pypi"
 cvxpy = "*"
 yfinance = "*"
 tensorflow = "*"
-django = "*"
 django-cors-headers = "*"
 djangorestframework = "*"
+django = "*"
+xgboost = "*"
 
 [dev-packages]
 
