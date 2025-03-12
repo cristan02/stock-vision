@@ -17,195 +17,8 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBRegressor
+from xgboost import XGBRegressor      
 
-
-@api_view(['POST'])
-def validate_tickers(request):
-    """
-    Validate stock tickers from a space-separated string and return last day's closing price and date for valid tickers.
-    """
-
-    tickers_string = request.data.get("stocks", "")
-
-    # Ensure input is a non-empty string
-    if not isinstance(tickers_string, str) or not tickers_string.strip():
-        return Response({"error": "Invalid input. Provide a space-separated string of tickers."}, status=400)
-
-    # Convert string to list and remove extra spaces
-    tickers = [ticker.strip().upper() for ticker in tickers_string.split() if ticker.strip()]
-
-    if not tickers:
-        return Response({"error": "No valid tickers found in input."}, status=400)
-
-    invalid_tickers = []
-    valid_tickers = {}
-
-    for ticker in tickers:
-        stock = yf.Ticker(ticker)
-        try:
-            # Fetch historical data for the last available day
-            history = stock.history(period="1d")
-            if history.empty:
-                invalid_tickers.append(ticker)
-            else:
-                # Get the last day's closing price and date
-                last_close_price = history['Close'].iloc[-1]
-                last_date = history.index[-1].strftime("%Y-%m-%d")  # Format date as string
-                valid_tickers[ticker] = {
-                    "last_close_price": round(last_close_price, 2),  # Round to 2 decimal places
-                    "last_date": last_date  # Add the last retrieved date
-                }
-        except Exception as e:
-            invalid_tickers.append(ticker)
-
-    response_data = {
-        "is_valid": not bool(invalid_tickers),  # True if no invalid tickers
-        "valid_tickers": valid_tickers,
-    }
-
-    if invalid_tickers:
-        response_data["invalid_tickers"] = invalid_tickers
-
-    return Response(response_data)
-
-# For portfolio suggestion
-@api_view(['POST'])
-def optimize_portfolio_api(request):
-    try:
-        # Extract user inputs
-        data = request.data  
-        universe_tickers = data.get("tickers", ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOG', 'ZOMATO.NS'])
-        investment_budget_usd = data.get("budget", 10000)
-
-        # Fetch USD to INR exchange rate
-        exchange_rate_data = yf.download('USDINR=X', period='1d')
-        exchange_rate = exchange_rate_data['Close'].iloc[-1] if not exchange_rate_data.empty else 83.0
-
-        # Categorize stocks
-        indian_stocks = [ticker for ticker in universe_tickers if ticker.endswith('.NS')]
-        us_stocks = [ticker for ticker in universe_tickers if ticker not in indian_stocks]
-
-        # Download historical data
-        stock_data = yf.download(universe_tickers, period="5y")['Close']
-        returns_all = stock_data.pct_change(fill_method=None).dropna()  # Fix for FutureWarning
-
-        # Get latest stock prices
-        latest_prices = yf.download(universe_tickers, period='1d', interval='1d')['Close'].iloc[-1].astype(float)
-        latest_prices_usd = latest_prices.copy()
-
-        # Convert INR prices to USD
-        for ticker in indian_stocks:
-            latest_prices_usd[ticker] /= float(exchange_rate.iloc[0])  # Fix for FutureWarning
-
-        # Expected returns & covariance matrix
-        exp_returns = returns_all.mean().astype(float)
-        cov_matrix = returns_all.cov().astype(float)
-
-        def optimize_portfolio(strategy):
-            n = len(universe_tickers)
-            if n == 0:
-                return None
-
-            w = cp.Variable(n)
-            port_variance = cp.quad_form(w, cov_matrix.values)
-            port_return = exp_returns.values @ w
-
-            # Constraints
-            constraints = [cp.sum(w) == 1, w >= 0.0001]
-
-            if strategy == "max_sharpe":
-                # DCP-compliant formulation for Sharpe ratio maximization
-                risk_free_rate = 0.0  # Assuming risk-free rate is 0 for simplicity
-                # Maximize the risk-adjusted return (Sharpe ratio)
-                objective = cp.Maximize(port_return - 0.5 * port_variance)  # Quadratic approximation
-            elif strategy == "min_volatility":
-                objective = cp.Minimize(port_variance)
-                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
-            else:
-                objective = cp.Minimize(port_variance - 0.5 * port_return)
-                constraints.append(w <= 0.4)
-                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
-
-            problem = cp.Problem(objective, constraints)
-            try:
-                problem.solve(solver=cp.ECOS)  # Use ECOS solver
-                if w.value is not None:
-                    opt_weights = np.maximum(w.value, 0)
-                    opt_weights /= np.sum(opt_weights)
-                    return {
-                        'tickers': universe_tickers,
-                        'weights': opt_weights.tolist(),
-                        'expected_return': float(port_return.value),
-                        'risk': float(np.sqrt(port_variance.value)),
-                        'sharpe_ratio': float((port_return.value - risk_free_rate) / np.sqrt(port_variance.value)) if np.sqrt(port_variance.value) > 0 else 0,
-                        'risk_free_rate': risk_free_rate  # Pass risk_free_rate to the response
-                    }
-            except cp.error.SolverError as e:
-                print(f"Solver Error for {strategy}: {e}")
-                return None
-
-        def create_portfolio_response(title, portfolio):
-            if not portfolio:
-                return None
-
-            allocated_amounts = investment_budget_usd * np.array(portfolio['weights'])
-            shares_allocated, total_spent = [], 0
-
-            for ticker, allocated in zip(portfolio['tickers'], allocated_amounts):
-                price_usd = latest_prices_usd.get(ticker, np.nan)
-                if pd.isna(price_usd):
-                    continue
-                num_shares = math.floor(allocated / price_usd)
-                spent = num_shares * price_usd
-                total_spent += spent
-                shares_allocated.append({
-                    "symbol": ticker,
-                    "shares": num_shares,
-                    "price": round(float(price_usd), 2),
-                    "allocated": round(float(allocated), 2),
-                    "spent": round(float(spent), 2),
-                })
-
-            return {
-                "name": title,
-                "stocks": portfolio['tickers'],
-                "optimized_weights": [round(w, 2) for w in portfolio['weights']],  # Round to 2 decimal places
-                "expected_daily_return": round(float(portfolio['expected_return']), 4),
-                "portfolio_risk": round(float(portfolio['risk']), 4),
-                "sharpe_ratio": round(float(portfolio['sharpe_ratio']), 4),
-                "share_allocation": shares_allocated,
-                "total_spent": round(total_spent, 2),
-                "budget": investment_budget_usd
-            }
-
-        # Compute portfolios for different strategies
-        strategies = ["max_sharpe", "min_volatility", "balanced"]
-        portfolios = [create_portfolio_response(strategy.replace('_', ' ').title() + " Portfolio", optimize_portfolio(strategy)) for strategy in strategies]
-
-        return Response([p for p in portfolios if p is not None])
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return Response({"error": str(e)}, status=500)
-        
-
-
-# from rest_framework.decorators import api_view
-# from rest_framework.response import Response
-# import yfinance as yf
-# import numpy as np
-# import pandas as pd
-# from sklearn.model_selection import train_test_split
-# from sklearn.preprocessing import StandardScaler, MinMaxScaler
-# from sklearn.linear_model import Ridge
-# from sklearn.ensemble import RandomForestRegressor
-# from xgboost import XGBRegressor
-# from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-# from datetime import datetime
-# from tensorflow.keras.models import Sequential
-# from tensorflow.keras.layers import LSTM, Dense, Dropout
-# from tensorflow.keras.callbacks import EarlyStopping
 
 # Fetch stock data
 def get_stock_data(ticker, start, end):
@@ -508,3 +321,175 @@ def lstm_stock_prediction(request):
 
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+# validation tickers for apis
+@api_view(['POST'])
+def validate_tickers(request):
+    """
+    Validate stock tickers from a space-separated string and return last day's closing price and date for valid tickers.
+    """
+
+    tickers_string = request.data.get("stocks", "")
+
+    # Ensure input is a non-empty string
+    if not isinstance(tickers_string, str) or not tickers_string.strip():
+        return Response({"error": "Invalid input. Provide a space-separated string of tickers."}, status=400)
+
+    # Convert string to list and remove extra spaces
+    tickers = [ticker.strip().upper() for ticker in tickers_string.split() if ticker.strip()]
+
+    if not tickers:
+        return Response({"error": "No valid tickers found in input."}, status=400)
+
+    invalid_tickers = []
+    valid_tickers = {}
+
+    for ticker in tickers:
+        stock = yf.Ticker(ticker)
+        try:
+            # Fetch historical data for the last available day
+            history = stock.history(period="1d")
+            if history.empty:
+                invalid_tickers.append(ticker)
+            else:
+                # Get the last day's closing price and date
+                last_close_price = history['Close'].iloc[-1]
+                last_date = history.index[-1].strftime("%Y-%m-%d")  # Format date as string
+                valid_tickers[ticker] = {
+                    "last_close_price": round(last_close_price, 2),  # Round to 2 decimal places
+                    "last_date": last_date  # Add the last retrieved date
+                }
+        except Exception as e:
+            invalid_tickers.append(ticker)
+
+    response_data = {
+        "is_valid": not bool(invalid_tickers),  # True if no invalid tickers
+        "valid_tickers": valid_tickers,
+    }
+
+    if invalid_tickers:
+        response_data["invalid_tickers"] = invalid_tickers
+
+    return Response(response_data)
+
+# For portfolio suggestion
+@api_view(['POST'])
+def optimize_portfolio_api(request):
+    try:
+        # Extract user inputs
+        data = request.data  
+        universe_tickers = data.get("tickers", ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOG', 'ZOMATO.NS'])
+        investment_budget_usd = data.get("budget", 10000)
+
+        # Fetch USD to INR exchange rate
+        exchange_rate_data = yf.download('USDINR=X', period='1d')
+        exchange_rate = exchange_rate_data['Close'].iloc[-1] if not exchange_rate_data.empty else 83.0
+
+        # Categorize stocks
+        indian_stocks = [ticker for ticker in universe_tickers if ticker.endswith('.NS')]
+        us_stocks = [ticker for ticker in universe_tickers if ticker not in indian_stocks]
+
+        # Download historical data
+        stock_data = yf.download(universe_tickers, period="5y")['Close']
+        returns_all = stock_data.pct_change(fill_method=None).dropna()  # Fix for FutureWarning
+
+        # Get latest stock prices
+        latest_prices = yf.download(universe_tickers, period='1d', interval='1d')['Close'].iloc[-1].astype(float)
+        latest_prices_usd = latest_prices.copy()
+
+        # Convert INR prices to USD
+        for ticker in indian_stocks:
+            latest_prices_usd[ticker] /= float(exchange_rate.iloc[0])  # Fix for FutureWarning
+
+        # Expected returns & covariance matrix
+        exp_returns = returns_all.mean().astype(float)
+        cov_matrix = returns_all.cov().astype(float)
+
+        def optimize_portfolio(strategy):
+            n = len(universe_tickers)
+            if n == 0:
+                return None
+
+            w = cp.Variable(n)
+            port_variance = cp.quad_form(w, cov_matrix.values)
+            port_return = exp_returns.values @ w
+
+            # Constraints
+            constraints = [cp.sum(w) == 1, w >= 0.0001]
+
+            if strategy == "max_sharpe":
+                # DCP-compliant formulation for Sharpe ratio maximization
+                risk_free_rate = 0.0  # Assuming risk-free rate is 0 for simplicity
+                # Maximize the risk-adjusted return (Sharpe ratio)
+                objective = cp.Maximize(port_return - 0.5 * port_variance)  # Quadratic approximation
+            elif strategy == "min_volatility":
+                objective = cp.Minimize(port_variance)
+                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
+            else:
+                objective = cp.Minimize(port_variance - 0.5 * port_return)
+                constraints.append(w <= 0.4)
+                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
+
+            problem = cp.Problem(objective, constraints)
+            try:
+                problem.solve(solver=cp.ECOS)  # Use ECOS solver
+                if w.value is not None:
+                    opt_weights = np.maximum(w.value, 0)
+                    opt_weights /= np.sum(opt_weights)
+                    return {
+                        'tickers': universe_tickers,
+                        'weights': opt_weights.tolist(),
+                        'expected_return': float(port_return.value),
+                        'risk': float(np.sqrt(port_variance.value)),
+                        'sharpe_ratio': float((port_return.value - risk_free_rate) / np.sqrt(port_variance.value)) if np.sqrt(port_variance.value) > 0 else 0,
+                        'risk_free_rate': risk_free_rate  # Pass risk_free_rate to the response
+                    }
+            except cp.error.SolverError as e:
+                print(f"Solver Error for {strategy}: {e}")
+                return None
+
+        def create_portfolio_response(title, portfolio):
+            if not portfolio:
+                return None
+
+            allocated_amounts = investment_budget_usd * np.array(portfolio['weights'])
+            shares_allocated, total_spent = [], 0
+
+            for ticker, allocated in zip(portfolio['tickers'], allocated_amounts):
+                price_usd = latest_prices_usd.get(ticker, np.nan)
+                if pd.isna(price_usd):
+                    continue
+                num_shares = math.floor(allocated / price_usd)
+                spent = num_shares * price_usd
+                total_spent += spent
+                shares_allocated.append({
+                    "symbol": ticker,
+                    "shares": num_shares,
+                    "price": round(float(price_usd), 2),
+                    "allocated": round(float(allocated), 2),
+                    "spent": round(float(spent), 2),
+                })
+
+            return {
+                "name": title,
+                "stocks": portfolio['tickers'],
+                "optimized_weights": [round(w, 2) for w in portfolio['weights']],  # Round to 2 decimal places
+                "expected_daily_return": round(float(portfolio['expected_return']), 4),
+                "portfolio_risk": round(float(portfolio['risk']), 4),
+                "sharpe_ratio": round(float(portfolio['sharpe_ratio']), 4),
+                "share_allocation": shares_allocated,
+                "total_spent": round(total_spent, 2),
+                "budget": investment_budget_usd
+            }
+
+        # Compute portfolios for different strategies
+        strategies = ["max_sharpe", "min_volatility", "balanced"]
+        portfolios = [create_portfolio_response(strategy.replace('_', ' ').title() + " Portfolio", optimize_portfolio(strategy)) for strategy in strategies]
+
+        return Response([p for p in portfolios if p is not None])
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return Response({"error": str(e)}, status=500)
+  
