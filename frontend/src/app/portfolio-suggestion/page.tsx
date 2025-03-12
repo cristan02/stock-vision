@@ -151,7 +151,10 @@ export default function Page() {
       return toast.error("Budget must be greater than 0");
     }
 
-    const stockSymbols = stocks.split(" ");
+    const stockSymbols = stocks
+      .split(" ")
+      .filter((symbol) => symbol.trim() !== "");
+    console.log("Stock symbols : ", stockSymbols);
 
     if (stockSymbols.length < 3) {
       return toast.error("Please enter at least 3 stock symbols");
