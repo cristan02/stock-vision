@@ -11,8 +11,8 @@ export default function Page() {
         </span>
         <span className=" ">Vision</span>
         <div className=" text-sm mt-5">
-          ~ Predictive Analytics and <br />
-          Portfolio Management
+          ~ Price Prediction and <br />
+          Portfolio Suggestion
         </div>
       </div>
 
