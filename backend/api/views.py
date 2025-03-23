@@ -9,7 +9,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
-from datetime import datetime
+from datetime import datetime, timedelta 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
@@ -19,6 +19,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor      
 
+step = 20
 
 # Fetch stock data
 def get_stock_data(ticker, start, end):
@@ -26,7 +27,7 @@ def get_stock_data(ticker, start, end):
     return stock[['Close']]
 
 # Prepare Data
-def prepare_data(df, lookback=10):
+def prepare_data(df, lookback=step):
     data = df.copy()
     for i in range(1, lookback + 1):
         data[f'Close_Lag_{i}'] = data['Close'].shift(i)
@@ -50,7 +51,7 @@ def evaluate_model(y_true, y_pred, model_name):
     return mae, mse, mape, r2
 
 # LSTM Preparation
-def prepare_lstm_data(df, time_steps=60):
+def prepare_lstm_data(df, time_steps=step):
     data = df['Close'].values
     scaler = MinMaxScaler(feature_range=(0, 1))
     data_scaled = scaler.fit_transform(data.reshape(-1, 1))
@@ -99,9 +100,10 @@ def ridge_stock_prediction(request):
         future_days = int(data.get("days", 30))
 
         # Fetch stock data
-        end_date = datetime.today().strftime('%Y-%m-%d')
-        df = get_stock_data(ticker, '2015-01-01', end_date)
-        data = prepare_data(df)
+        end_date = datetime.now().strftime('%Y-%m-%d')  # Set end_date to today's date
+        start_date = (datetime.now() - timedelta(days=365 * 15)).strftime('%Y-%m-%d')  # Set start_date to 10 years before today
+        df = get_stock_data(ticker, start_date, end_date)
+        data = prepare_data(df,step)
 
         # Split Data
         X = data.drop(columns=['Close'])
@@ -174,9 +176,10 @@ def random_forest_stock_prediction(request):
         future_days = int(data.get("days", 30))
 
         # Fetch stock data
-        end_date = datetime.today().strftime('%Y-%m-%d')
-        df = get_stock_data(ticker, '2015-01-01', end_date)
-        data = prepare_data(df)
+        end_date = datetime.now().strftime('%Y-%m-%d')  # Set end_date to today's date
+        start_date = (datetime.now() - timedelta(days=365 * 15)).strftime('%Y-%m-%d')  # Set start_date to 10 years before today
+        df = get_stock_data(ticker, start_date, end_date)
+        data = prepare_data(df,step)
 
         # Split Data
         X = data.drop(columns=['Close'])
@@ -226,9 +229,10 @@ def xgboost_stock_prediction(request):
         future_days = int(data.get("days", 30))
 
         # Fetch stock data
-        end_date = datetime.today().strftime('%Y-%m-%d')
-        df = get_stock_data(ticker, '2015-01-01', end_date)
-        data = prepare_data(df)
+        end_date = datetime.now().strftime('%Y-%m-%d')  # Set end_date to today's date
+        start_date = (datetime.now() - timedelta(days=365 * 15)).strftime('%Y-%m-%d')  # Set start_date to 10 years before today
+        df = get_stock_data(ticker, start_date, end_date)
+        data = prepare_data(df,step)
 
         # Split Data
         X = data.drop(columns=['Close'])
@@ -278,11 +282,12 @@ def lstm_stock_prediction(request):
         future_days = int(data.get("days", 30))
 
         # Fetch stock data
-        end_date = datetime.today().strftime('%Y-%m-%d')
-        df = get_stock_data(ticker, '2015-01-01', end_date)
+        end_date = datetime.now().strftime('%Y-%m-%d')  # Set end_date to today's date
+        start_date = (datetime.now() - timedelta(days=365 * 15)).strftime('%Y-%m-%d')  # Set start_date to 10 years before today
+        df = get_stock_data(ticker, start_date, end_date)
 
         # Prepare LSTM data
-        X_train, X_test, y_train, y_test, scaler = prepare_lstm_data(df)
+        X_train, X_test, y_train, y_test, scaler = prepare_lstm_data(df,step)
 
         # Build and train LSTM model
         model = build_lstm_model((X_train.shape[1], 1))
@@ -373,13 +378,13 @@ def validate_tickers(request):
 
     return Response(response_data)
 
-# For portfolio suggestion
+
 @api_view(['POST'])
 def optimize_portfolio_api(request):
     try:
         # Extract user inputs
         data = request.data  
-        universe_tickers = data.get("tickers", ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOG', 'ZOMATO.NS'])
+        universe_tickers = data.get("tickers", ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOG'])
         investment_budget_usd = data.get("budget", 10000)
 
         # Fetch USD to INR exchange rate
@@ -411,42 +416,72 @@ def optimize_portfolio_api(request):
             if n == 0:
                 return None
 
-            w = cp.Variable(n)
-            port_variance = cp.quad_form(w, cov_matrix.values)
-            port_return = exp_returns.values @ w
-
-            # Constraints
-            constraints = [cp.sum(w) == 1, w >= 0.0001]
-
             if strategy == "max_sharpe":
-                # DCP-compliant formulation for Sharpe ratio maximization
-                risk_free_rate = 0.0  # Assuming risk-free rate is 0 for simplicity
-                # Maximize the risk-adjusted return (Sharpe ratio)
-                objective = cp.Maximize(port_return - 0.5 * port_variance)  # Quadratic approximation
-            elif strategy == "min_volatility":
-                objective = cp.Minimize(port_variance)
-                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
-            else:
-                objective = cp.Minimize(port_variance - 0.5 * port_return)
-                constraints.append(w <= 0.4)
-                risk_free_rate = 0.0  # Define risk_free_rate for other strategies
+                # Charnes-Cooper transformation for Sharpe ratio
+                risk_free_rate = 0.02 / 252  # Daily risk-free rate
+                y = cp.Variable(n)  # Transformed weights
+                k = cp.Variable()   # Auxiliary variable
 
-            problem = cp.Problem(objective, constraints)
+                # Objective: Maximize (μ - r_f)^T y
+                objective = cp.Maximize(exp_returns.values @ y - risk_free_rate * k)
+
+                # Constraints
+                constraints = [
+                    cp.sum(y) == k,  # Weights sum to k
+                    cp.quad_form(y, cov_matrix.values) <= 1,  # Variance constraint
+                    k >= 0  # k must be positive
+                ]
+
+                problem = cp.Problem(objective, constraints)
+            elif strategy == "min_volatility":
+                w = cp.Variable(n)
+                port_variance = cp.quad_form(w, cov_matrix.values)
+                objective = cp.Minimize(port_variance)
+                constraints = [cp.sum(w) == 1, w >= 0.0001, w <= 0.4]  # Limit max weight to 40%
+                problem = cp.Problem(objective, constraints)
+            elif strategy == "balanced":
+                w = cp.Variable(n)
+                port_variance = cp.quad_form(w, cov_matrix.values)
+                port_return = exp_returns.values @ w
+                objective = cp.Maximize(port_return - 0.5 * port_variance)
+                constraints = [cp.sum(w) == 1, w >= 0.0001, w <= 0.4]  # Limit max weight to 40%
+                problem = cp.Problem(objective, constraints)
+            else:
+                raise ValueError("Invalid strategy")
+
             try:
-                problem.solve(solver=cp.ECOS)  # Use ECOS solver
-                if w.value is not None:
-                    opt_weights = np.maximum(w.value, 0)
-                    opt_weights /= np.sum(opt_weights)
-                    return {
-                        'tickers': universe_tickers,
-                        'weights': opt_weights.tolist(),
-                        'expected_return': float(port_return.value),
-                        'risk': float(np.sqrt(port_variance.value)),
-                        'sharpe_ratio': float((port_return.value - risk_free_rate) / np.sqrt(port_variance.value)) if np.sqrt(port_variance.value) > 0 else 0,
-                        'risk_free_rate': risk_free_rate  # Pass risk_free_rate to the response
-                    }
-            except cp.error.SolverError as e:
-                print(f"Solver Error for {strategy}: {e}")
+                problem.solve(solver=cp.SCS, max_iters=10000, eps=1e-8)
+                if strategy == "max_sharpe":
+                    if y.value is not None and k.value is not None:
+                        opt_weights = y.value / k.value  # Recover original weights
+                        opt_weights = np.maximum(opt_weights, 0)
+                        opt_weights /= np.sum(opt_weights)
+                else:
+                    if w.value is not None:
+                        opt_weights = np.maximum(w.value, 0)
+                        opt_weights /= np.sum(opt_weights)
+
+                # Calculate portfolio metrics
+                port_return = exp_returns.values @ opt_weights
+                port_variance = opt_weights.T @ cov_matrix.values @ opt_weights
+
+                # Annualize portfolio return and risk
+                annualized_return = port_return * 252  # Annualized return
+                annualized_risk = np.sqrt(port_variance) * np.sqrt(252)  # Annualized risk
+
+                # Calculate Sharpe ratio
+                sharpe_ratio = (annualized_return - 0.02) / annualized_risk  # Annualized Sharpe ratio
+
+                return {
+                    'tickers': universe_tickers,
+                    'weights': opt_weights.tolist(),
+                    'expected_return': float(annualized_return),
+                    'risk': float(annualized_risk),
+                    'sharpe_ratio': float(sharpe_ratio),
+                    'risk_free_rate': 0.02  # Annual risk-free rate
+                }
+            except Exception as e:
+                print(f"Error optimizing {strategy}: {e}")
                 return None
 
         def create_portfolio_response(title, portfolio):
@@ -471,11 +506,15 @@ def optimize_portfolio_api(request):
                     "spent": round(float(spent), 2),
                 })
 
+            # Calculate expected yearly return percentage
+            expected_yearly_return_pct = portfolio['expected_return'] * 100  # Convert to percentage
+
             return {
                 "name": title,
                 "stocks": portfolio['tickers'],
                 "optimized_weights": [round(w, 2) for w in portfolio['weights']],  # Round to 2 decimal places
                 "expected_daily_return": round(float(portfolio['expected_return']), 4),
+                "expected_yearly_return_pct": round(expected_yearly_return_pct, 2),  # Add yearly return percentage
                 "portfolio_risk": round(float(portfolio['risk']), 4),
                 "sharpe_ratio": round(float(portfolio['sharpe_ratio']), 4),
                 "share_allocation": shares_allocated,
@@ -492,4 +531,3 @@ def optimize_portfolio_api(request):
     except Exception as e:
         print(f"Error: {e}")
         return Response({"error": str(e)}, status=500)
-  

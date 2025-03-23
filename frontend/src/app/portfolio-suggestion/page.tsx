@@ -15,6 +15,7 @@ import axios from "axios";
 export default function Page() {
   const [stocks, setStocks] = useState("");
   const [budget, setBudget] = useState("");
+  const [disabled, setDisabled] = useState(false);
 
   const resEx = [
     {
@@ -49,6 +50,7 @@ export default function Page() {
       ],
       total_spent: 0,
       budget: 0,
+      expected_yearly_return_pct: 0,
     },
     {
       name: "Min Volatility Portfolio",
@@ -82,6 +84,7 @@ export default function Page() {
       ],
       total_spent: 0,
       budget: 0,
+      expected_yearly_return_pct: 0,
     },
     {
       name: "Balanced Portfolio",
@@ -115,6 +118,7 @@ export default function Page() {
       ],
       total_spent: 0,
       budget: 0,
+      expected_yearly_return_pct: 0,
     },
   ];
 
@@ -150,6 +154,7 @@ export default function Page() {
     if (Number(budget) <= 0) {
       return toast.error("Budget must be greater than 0");
     }
+    setDisabled(true);
 
     const stockSymbols = stocks
       .split(" ")
@@ -157,6 +162,7 @@ export default function Page() {
     console.log("Stock symbols : ", stockSymbols);
 
     if (stockSymbols.length < 3) {
+      setDisabled(false);
       return toast.error("Please enter at least 3 stock symbols");
     }
 
@@ -169,6 +175,7 @@ export default function Page() {
       );
 
       if (response.status !== 200 || !response.data.is_valid) {
+        setDisabled(false);
         return toast.error(
           `Invalid stock symbols: ${response.data.invalid_tickers.join(", ")}`
         );
@@ -182,12 +189,15 @@ export default function Page() {
         .then((response) => {
           setPortfolios(response.data);
           setFlag(true);
+          setDisabled(false);
           return;
         })
         .catch((error) => {
+          setDisabled(false);
           return toast.error("Failed to get portfolio suggestion");
         });
     } catch (e: any) {
+      setDisabled(false);
       toast.error("Failed to validate stock symbols");
     }
   };
@@ -224,6 +234,7 @@ export default function Page() {
           </div>
           {flag ? (
             <Button
+              disabled={disabled}
               onClick={() => {
                 window.location.reload();
               }}
@@ -232,7 +243,11 @@ export default function Page() {
               Reset
             </Button>
           ) : (
-            <Button onClick={handlePredict} className="w-full">
+            <Button
+              disabled={disabled}
+              onClick={handlePredict}
+              className="w-full"
+            >
               Get Suggestion
             </Button>
           )}

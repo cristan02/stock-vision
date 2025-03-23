@@ -25,18 +25,18 @@ export default function Portfolio({ item }: any) {
       <CardContent className="space-y-4">
         <div className="grid w-full max-w-sm items-center gap-1.5">
           <div className="flex gap-2">
-            <p className="w-fit whitespace-nowrap font-medium">Risk :</p>
-            <div className="w-fit text-primary flex flex-wrap gap-2">
-              {item.portfolio_risk}
-            </div>
-          </div>
-
-          <div className="flex gap-2">
             <p className="w-fit whitespace-nowrap font-medium">
               Sharpe Ratio :
             </p>
             <div className="w-fit text-primary flex flex-wrap gap-2">
               {item.sharpe_ratio}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <p className="w-fit whitespace-nowrap font-medium">Risk :</p>
+            <div className="w-fit text-primary flex flex-wrap gap-2">
+              {item.portfolio_risk}
             </div>
           </div>
 

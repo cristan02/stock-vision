@@ -39,7 +39,7 @@ export default function Page() {
 
   const [algoMetrics, setAlgoMetrics] = useState([
     {
-      name: "Ridge Regression",
+      name: "LSTM with Tanh Algorithm",
       MAE: null,
       MSE: null,
       MAPE: null,
@@ -47,7 +47,7 @@ export default function Page() {
       future_predictions: [],
     },
     {
-      name: "Random Forest",
+      name: "LSTM with ReLU",
       MAE: null,
       MSE: null,
       MAPE: null,
@@ -55,7 +55,7 @@ export default function Page() {
       future_predictions: [],
     },
     {
-      name: "XGBoost",
+      name: "LSTM with Bidirectional Layers",
       MAE: null,
       MSE: null,
       MAPE: null,
@@ -63,7 +63,7 @@ export default function Page() {
       future_predictions: [],
     },
     {
-      name: "LSTM",
+      name: "LSTM with Convolutional Layers",
       MAE: null,
       MSE: null,
       MAPE: null,
@@ -74,10 +74,10 @@ export default function Page() {
   const [bestAlgorithm, setBestAlgorithm] = useState<any>();
   const [disabled, setDisabled] = useState(false);
 
-  const handleRidge = async () => {
+  const handleTanh = async () => {
     try {
       await axios
-        .post("http://localhost:8000/api/predict-stock-ridge/", {
+        .post("http://localhost:8000/api/lstm-varients/tanh/", {
           ticker: stock,
           days: parseInt(days),
         })
@@ -94,21 +94,21 @@ export default function Page() {
             return newMetrics;
           });
 
-          toast.success("Ridge Regression Algorithm Completed");
+          toast.success("LSTM with Tanh Algorithm Algorithm Completed");
         })
         .catch((error) => {
-          toast.error("Error in Ridge Regression Algorithm");
+          toast.error("Error in LSTM with Tanh Algorithm Algorithm");
         });
     } catch (e) {
-      toast.error("Error in Ridge Regression Algorithm");
+      toast.error("Error in LSTM with Tanh Algorithm Algorithm");
     }
     setDisabled(false);
   };
 
-  const handleRandomForest = async () => {
+  const handleRelu = async () => {
     try {
       await axios
-        .post("http://localhost:8000/api/predict-stock-rf/", {
+        .post("http://localhost:8000/api/lstm-varients/relu/", {
           ticker: stock,
           days: parseInt(days),
         })
@@ -124,21 +124,21 @@ export default function Page() {
             return newMetrics;
           });
 
-          toast.success("Random Forest Algorithm Completed");
+          toast.success("LSTM with ReLU Algorithm Completed");
         })
         .catch((error) => {
-          toast.error("Error in Random Forest Algorithm");
+          toast.error("Error in LSTM with ReLU Algorithm");
         });
     } catch (e) {
-      toast.error("Error in Random Forest Algorithm");
+      toast.error("Error in LSTM with ReLU Algorithm");
     }
     setDisabled(false);
   };
 
-  const handleXGBoost = async () => {
+  const handleBidirectional = async () => {
     try {
       await axios
-        .post("http://localhost:8000/api/predict-stock-xgboost/", {
+        .post("http://localhost:8000/api/lstm-varients/bidirectional/", {
           ticker: stock,
           days: parseInt(days),
         })
@@ -154,21 +154,21 @@ export default function Page() {
             return newMetrics;
           });
 
-          toast.success("XGBoost Algorithm Completed");
+          toast.success("LSTM with Bidirectional Layers Completed");
         })
         .catch((error) => {
-          toast.error("Error in XGBoost Algorithm");
+          toast.error("Error in LSTM with Bidirectional Layers");
         });
     } catch (e) {
-      toast.error("Error in XGBoost Algorithm");
+      toast.error("Error in LSTM with Bidirectional Layers");
     }
     setDisabled(false);
   };
 
-  const handleLSTM = async () => {
+  const handleConvolutional = async () => {
     try {
       await axios
-        .post("http://localhost:8000/api/predict-stock-lstm/", {
+        .post("http://localhost:8000/api/lstm-varients/conv/", {
           ticker: stock,
           days: parseInt(days),
         })
@@ -184,13 +184,13 @@ export default function Page() {
             return newMetrics;
           });
 
-          toast.success("LSTM Algorithm Completed");
+          toast.success("LSTM with Convolutional Layers Algorithm Completed");
         })
         .catch((error) => {
-          toast.error("Error in LSTM Algorithm");
+          toast.error("Error in LSTM with Convolutional Layers Algorithm");
         });
     } catch (e) {
-      toast.error("Error in LSTM Algorithm");
+      toast.error("Error in LSTM with Convolutional Layers Algorithm");
     }
     setDisabled(false);
   };
@@ -228,10 +228,10 @@ export default function Page() {
       setStockPrice(response.data.valid_tickers[stock].last_close_price);
       setStockDate(response.data.valid_tickers[stock].last_date);
 
-      handleRidge();
-      handleRandomForest();
-      handleXGBoost();
-      handleLSTM();
+      handleTanh();
+      handleRelu();
+      handleBidirectional();
+      handleConvolutional();
     } catch (e) {
       toast.error("Failed to validate stock symbols");
       setDisabled(false);
